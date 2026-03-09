@@ -4,7 +4,7 @@
 
 ```bash
 # Build jar files
-./build.sh
+chmod +x build.sh && ./build.sh
 
 # Run 
 java -jar betting-server.jar
