@@ -95,12 +95,19 @@ public class SessionService {
     private void cleanExpiredSessions() {
         int cleaned = 0;
         for (Map.Entry<Integer, Session> entry : customerSessions.entrySet()) {
-            if (entry.getValue().isExpired()) {
-                Session removed = customerSessions.remove(entry.getKey());
-                if (removed != null) {
-                    sessionKeyMap.remove(removed.getSessionKey());
-                    locks.remove(entry.getKey());
-                    cleaned++;
+            Integer customerId = entry.getKey();
+            Session session = entry.getValue();
+            if (session.isExpired()) {
+                // fix clean Session without lock bug
+                synchronized (getLock(customerId)) {
+                    // Double check
+                    Session current = customerSessions.get(customerId);
+                    if (current != null && current.getSessionKey().equals(session.getSessionKey()) && current.isExpired()) {
+                        customerSessions.remove(customerId);
+                        sessionKeyMap.remove(session.getSessionKey());
+                        locks.remove(customerId);
+                        cleaned++;
+                    }
                 }
             }
         }
