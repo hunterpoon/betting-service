@@ -36,7 +36,8 @@ public class StakeService {
     }
 
     private static class OfferStakes {
-        private final ConcurrentHashMap<Integer, CustomerStakes> customerStakes = new ConcurrentHashMap<>();
+        // customerId -> maxStake
+        private final ConcurrentHashMap<Integer, Integer> customerMaxStakes = new ConcurrentHashMap<>();
 
         // cache high stakes string
         private volatile String cachedHighStakes = "";
@@ -45,10 +46,30 @@ public class StakeService {
         private final Object lock = new Object();
 
         public void addStake(int customerId, int stake) {
-            CustomerStakes cs = customerStakes.computeIfAbsent(customerId, k -> new CustomerStakes());
-            if (cs.addStake(stake)) {
-                //setup recalculate flag
-                dirty = true;
+            Integer current = customerMaxStakes.get(customerId);
+            if (current == null || stake > current) {
+                customerMaxStakes.put(customerId, stake);
+            }
+            dirty = true;
+            pruneIfNeeded();
+        }
+
+        /**
+         * if customerMaxStakes size > HIGH_STAKES_LIMIT, cut the results
+         */
+        private void pruneIfNeeded() {
+            if (customerMaxStakes.size() <= HIGH_STAKES_LIMIT) {
+                return;
+            }
+            // cut results
+            List<Integer> values = new ArrayList<>(customerMaxStakes.values());
+            values.sort(Collections.reverseOrder());
+            int threshold = values.get(HIGH_STAKES_LIMIT - 1);
+            Iterator<Map.Entry<Integer, Integer>> it = customerMaxStakes.entrySet().iterator();
+            while (it.hasNext()) {
+                if (it.next().getValue() < threshold) {
+                    it.remove();
+                }
             }
         }
 
@@ -56,11 +77,11 @@ public class StakeService {
             if (!dirty) {
                 return cachedHighStakes;
             }
+            //update the cache
             synchronized (lock) {
                 if (!dirty) {
                     return cachedHighStakes;
                 }
-                // if dirty is true, recalculate
                 cachedHighStakes = calculateHighStakes();
                 dirty = false;
                 return cachedHighStakes;
@@ -68,20 +89,20 @@ public class StakeService {
         }
 
         private String calculateHighStakes() {
-            if (customerStakes.isEmpty()) {
+            if (customerMaxStakes.isEmpty()) {
                 return "";
             }
 
             PriorityQueue<int[]> minHeap = new PriorityQueue<>(
                     HIGH_STAKES_LIMIT + 1, Comparator.comparingInt(a -> a[1]));
 
-            for (Map.Entry<Integer, CustomerStakes> entry : customerStakes.entrySet()) {
+            for (Map.Entry<Integer, Integer> entry : customerMaxStakes.entrySet()) {
                 int customerId = entry.getKey();
-                int maxStake = entry.getValue().getMaxStake();
+                int maxStake = entry.getValue();
                 if (maxStake > 0) {
                     minHeap.offer(new int[] { customerId, maxStake });
                     if (minHeap.size() > HIGH_STAKES_LIMIT) {
-                        minHeap.poll(); // Remove the smallest
+                        minHeap.poll();
                     }
                 }
             }
@@ -104,27 +125,6 @@ public class StakeService {
                 sb.append(items[i][0]).append("=").append(items[i][1]);
             }
             return sb.toString();
-        }
-    }
-
-    /**
-     * Tracks all stakes for a single customer
-     */
-    private static class CustomerStakes {
-        private final List<Integer> allStakes = new ArrayList<>();
-        private int maxStake = 0;
-
-        synchronized boolean addStake(int stake) {
-            allStakes.add(stake);
-            if (stake > maxStake) {
-                maxStake = stake;
-                return true;
-            }
-            return false;
-        }
-
-        synchronized int getMaxStake() {
-            return maxStake;
         }
     }
 }
